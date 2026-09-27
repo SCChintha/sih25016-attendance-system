@@ -8,8 +8,9 @@ import { useAuth } from "./context/AuthContext";
 import { StudentDashboard } from "./components/StudentDashboard";
 import { FacultyDashboard } from "./components/FacultyDashboard";
 import { AdminDashboard } from "./components/AdminDashboard";
+import { StudentOnboardingWizard } from "./components/StudentOnboardingWizard";
 import { Button } from "./components/ui/button";
-import { LogOut } from "lucide-react";
+import { LogOut, Settings } from "lucide-react";
 
 export default function App() {
   const [path, setPath] = useState(window.location.pathname);
@@ -31,25 +32,65 @@ export default function App() {
 
   const role = path.match(/^\/dashboard\/(student|faculty|admin)$/)?.[1];
   if (!role) return <Landing navigate={navigate} />;
-  return <ProtectedRoute role={role} navigate={navigate}><DashboardPage role={role} logout={logout} />
-  </ProtectedRoute>;
+  
+  return (
+    <ProtectedRoute role={role} navigate={navigate}>
+      <DashboardPage role={role} logout={logout} navigate={navigate} />
+    </ProtectedRoute>
+  );
 }
 
-function DashboardPage({ role, logout }) {
+function DashboardPage({ role, logout, navigate }) {
   const { user } = useAuth();
-  const dashboard = role === "student" ? <StudentDashboard user={user} /> : role === "faculty" ? <FacultyDashboard user={user} /> : <AdminDashboard user={user} />;
-  return <div className="min-h-screen bg-background">
+  const [showWizard, setShowWizard] = useState(false);
+
+  if (role === "student" && (showWizard || (user && !user.onboardingCompleted))) {
+    return (
+      <StudentOnboardingWizard
+        user={user}
+        onComplete={() => {
+          setShowWizard(false);
+          navigate("/dashboard/student");
+        }}
+      />
+    );
+  }
+
+  const dashboard =
+    role === "student" ? (
+      <StudentDashboard user={user} onEditOnboarding={() => setShowWizard(true)} />
+    ) : role === "faculty" ? (
+      <FacultyDashboard user={user} />
+    ) : (
+      <AdminDashboard user={user} />
+    );
+
+  return (
+    <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-semibold">AttendanceTracker</h1>
-            <p className="text-muted-foreground">Smart Attendance Management System</p>
+            <h1 className="text-2xl font-semibold">SmartAttend</h1>
+            <p className="text-muted-foreground text-sm">Automated Student Attendance System</p>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <p className="font-medium">{user.name}</p>
-              <p className="text-sm text-muted-foreground capitalize">{user.role}</p>
+              <p className="font-medium">{user?.name}</p>
+              <p className="text-xs text-muted-foreground capitalize">
+                {user?.role} {user?.academicGrade ? `• ${user.academicGrade}` : ""}
+              </p>
             </div>
+            {role === "student" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowWizard(true)}
+                title="Edit Course & Faculty Assignments"
+              >
+                <Settings className="h-4 w-4 mr-1" />
+                Setup
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={logout}>
               <LogOut className="h-4 w-4 mr-2" />
               Logout
@@ -57,9 +98,8 @@ function DashboardPage({ role, logout }) {
           </div>
         </div>
       </header>
-      
-      <main className="container mx-auto px-4 py-6">
-        {dashboard}
-      </main>
-    </div>;
+
+      <main className="container mx-auto px-4 py-6">{dashboard}</main>
+    </div>
+  );
 }

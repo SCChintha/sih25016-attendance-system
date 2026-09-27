@@ -39,6 +39,10 @@ export function AuthProvider({ children }) {
     return data;
   }
 
+  function updateUser(updates) {
+    setUser((prev) => (prev ? { ...prev, ...updates } : prev));
+  }
+
   function logout() {
     localStorage.removeItem(TOKEN_KEY);
     setUser(null);
@@ -46,7 +50,11 @@ export function AuthProvider({ children }) {
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
-  return <AuthContext.Provider value={{ user, loading, login, register, getSections, logout, getApiErrors }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading, login, register, getSections, updateUser, logout, getApiErrors }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

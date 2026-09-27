@@ -3,11 +3,9 @@ package com.smartattend.auth;
 import com.smartattend.domain.AppUser;
 import com.smartattend.domain.Faculty;
 import com.smartattend.domain.Role;
-import com.smartattend.domain.Section;
 import com.smartattend.domain.Student;
 import com.smartattend.repository.AppUserRepository;
 import com.smartattend.repository.FacultyRepository;
-import com.smartattend.repository.SectionRepository;
 import com.smartattend.repository.StudentRepository;
 import com.smartattend.security.JwtService;
 import jakarta.validation.Valid;
@@ -24,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Optional;
+
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -33,21 +33,19 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final StudentRepository students;
     private final FacultyRepository faculty;
-    private final SectionRepository sections;
 
     public AuthController(AuthenticationManager authenticationManager, AppUserRepository users, JwtService jwtService,
-                          PasswordEncoder passwordEncoder, StudentRepository students, FacultyRepository faculty,
-                          SectionRepository sections) {
+                          PasswordEncoder passwordEncoder, StudentRepository students, FacultyRepository faculty) {
         this.authenticationManager = authenticationManager;
         this.users = users;
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
         this.students = students;
         this.faculty = faculty;
-        this.sections = sections;
     }
 
     @PostMapping("/login")
+    @Transactional(readOnly = true)
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         try {
             authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.email(), request.password()));
@@ -64,16 +62,9 @@ public class AuthController {
         if (users.findByEmail(email).isPresent()) {
             throw new RegistrationFieldException("email", "Email is already registered");
         }
-        if (request.role() == Role.STUDENT && request.sectionId() == null) {
-            throw new RegistrationFieldException("sectionId", "Section is required for student accounts");
-        }
-        if (request.role() != Role.STUDENT && request.sectionId() != null) {
-            throw new RegistrationFieldException("sectionId", "Section is only used for student accounts");
-        }
         AppUser user = users.save(new AppUser(request.name().trim(), email, passwordEncoder.encode(request.password()), request.role()));
         if (request.role() == Role.STUDENT) {
-            Section section = sections.findById(request.sectionId()).orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Section not found"));
-            students.save(new Student(user, section));
+            students.save(new Student(user));
         } else if (request.role() == Role.FACULTY) {
             faculty.save(new Faculty(user));
         }
@@ -81,6 +72,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @Transactional(readOnly = true)
     public UserResponse me(org.springframework.security.core.Authentication authentication) {
         return userResponse(users.findByEmail(authentication.getName()).orElseThrow());
     }
@@ -90,15 +82,28 @@ public class AuthController {
     }
 
     private UserResponse userResponse(AppUser user) {
-        return new UserResponse(user.getId(), user.getName(), user.getEmail(), user.getRole().name());
+        boolean onboardingCompleted = true;
+        Long sectionId = null;
+        String academicGrade = null;
+        if (user.getRole() == Role.STUDENT) {
+            Optional<Student> studentOpt = students.findByUserId(user.getId());
+            if (studentOpt.isPresent()) {
+                Student s = studentOpt.get();
+                onboardingCompleted = s.isOnboardingCompleted();
+                sectionId = s.getSection() != null ? s.getSection().getId() : null;
+                academicGrade = s.getAcademicGrade();
+            } else {
+                onboardingCompleted = false;
+            }
+        }
+        return new UserResponse(user.getId(), user.getName(), user.getEmail(), user.getRole().name(), onboardingCompleted, sectionId, academicGrade);
     }
 
     public record LoginRequest(@NotBlank @Email String email, @NotBlank String password) { }
     public record RegisterRequest(@NotBlank @Size(max = 160) String name, @NotBlank @Email String email,
-                                  @NotBlank @Size(min = 8, max = 128) String password, @NotNull Role role,
-                                  Long sectionId) { }
+                                  @NotBlank @Size(min = 8, max = 128) String password, @NotNull Role role) { }
     public record LoginResponse(String token, UserResponse user) { }
-    public record UserResponse(Long id, String name, String email, String role) { }
+    public record UserResponse(Long id, String name, String email, String role, boolean onboardingCompleted, Long sectionId, String academicGrade) { }
     public record FieldException(String field, String message) { }
 
     public static class RegistrationFieldException extends RuntimeException {

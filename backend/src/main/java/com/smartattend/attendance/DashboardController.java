@@ -12,12 +12,11 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Read models for the existing dashboards. Values are calculated from attendance tables, never seeded UI data. */
+/** Read models for the existing dashboards. Values are calculated from attendance tables. */
 @RestController
 @RequestMapping("/api/dashboard")
 @Transactional(readOnly = true)
@@ -30,17 +29,23 @@ public class DashboardController {
     private final TimetableSlotRepository slots;
     private final AttendanceSessionRepository sessions;
     private final AttendanceRecordRepository records;
+    private final StudentSubjectFacultyRepository studentSubjectFacultyRepository;
 
     public DashboardController(AppUserRepository users, StudentRepository students, FacultyRepository faculty,
                                TimetableSlotRepository slots, AttendanceSessionRepository sessions,
-                               AttendanceRecordRepository records) {
+                               AttendanceRecordRepository records,
+                               StudentSubjectFacultyRepository studentSubjectFacultyRepository) {
         this.users = users; this.students = students; this.faculty = faculty; this.slots = slots;
         this.sessions = sessions; this.records = records;
+        this.studentSubjectFacultyRepository = studentSubjectFacultyRepository;
     }
 
     @GetMapping("/student")
     public StudentDashboardResponse student(Authentication authentication) {
         Student student = currentStudent(authentication);
+        if (student.getSection() == null || !student.isOnboardingCompleted()) {
+            return new StudentDashboardResponse(0.0, 0, 0, 0, List.of(), List.of());
+        }
         List<AttendanceSession> conducted = conductedForSection(student.getSection().getId());
         List<AttendanceRecord> allRecords = records.findAll();
         long present = recordsForStudent(allRecords, student.getId(), conducted).size();
@@ -54,17 +59,40 @@ public class DashboardController {
                 boolean marked = todaySession.isPresent() && allRecords.stream().anyMatch(record -> record.getStudent().getId().equals(student.getId()) && record.getSession().getId().equals(todaySession.get().getId()));
                 return new ScheduleItem(slot.getId(), slot.getSubject().getName(), slot.getSubject().getCode(), CLOCK.format(slot.getStartTime()), slot.getRoom(), marked ? "present" : "upcoming");
             }).toList();
+
         Map<Long, List<AttendanceSession>> bySubject = conducted.stream().collect(Collectors.groupingBy(session -> session.getSubject().getId()));
-        Map<Long, TimetableSlot> subjectSlots = sectionSlots.stream().collect(Collectors.toMap(slot -> slot.getSubject().getId(), Function.identity(), (first, ignored) -> first));
-        Set<Long> subjectIds = new LinkedHashSet<>(); subjectIds.addAll(subjectSlots.keySet()); subjectIds.addAll(bySubject.keySet());
-        List<SubjectAttendance> subjectAttendance = subjectIds.stream().map(subjectId -> {
-            TimetableSlot slot = subjectSlots.get(subjectId);
-            List<AttendanceSession> subjectSessions = bySubject.getOrDefault(subjectId, List.of());
-            long subjectPresent = recordsForStudent(allRecords, student.getId(), subjectSessions).size();
-            Subject subject = slot != null ? slot.getSubject() : subjectSessions.get(0).getSubject();
-            String facultyName = slot != null ? slot.getFaculty().getUser().getName() : subjectSessions.get(0).getFaculty().getUser().getName();
-            return new SubjectAttendance(subjectId, subject.getCode(), subject.getName(), facultyName, subjectPresent, subjectSessions.size(), percentage(subjectPresent, subjectSessions.size()));
-        }).sorted(Comparator.comparing(SubjectAttendance::name)).toList();
+
+        List<StudentSubjectFaculty> studentMappings = studentSubjectFacultyRepository.findByStudentId(student.getId());
+
+        List<SubjectAttendance> subjectAttendance;
+        if (!studentMappings.isEmpty()) {
+            subjectAttendance = studentMappings.stream().map(ssf -> {
+                Long subjectId = ssf.getSubject().getId();
+                List<AttendanceSession> subjectSessions = bySubject.getOrDefault(subjectId, List.of());
+                long subjectPresent = recordsForStudent(allRecords, student.getId(), subjectSessions).size();
+                return new SubjectAttendance(
+                    subjectId,
+                    ssf.getSubject().getCode(),
+                    ssf.getSubject().getName(),
+                    ssf.getFaculty().getUser().getName(),
+                    subjectPresent,
+                    subjectSessions.size(),
+                    percentage(subjectPresent, subjectSessions.size())
+                );
+            }).sorted(Comparator.comparing(SubjectAttendance::name)).toList();
+        } else {
+            Map<Long, TimetableSlot> subjectSlots = sectionSlots.stream().collect(Collectors.toMap(slot -> slot.getSubject().getId(), Function.identity(), (first, ignored) -> first));
+            Set<Long> subjectIds = new LinkedHashSet<>(); subjectIds.addAll(subjectSlots.keySet()); subjectIds.addAll(bySubject.keySet());
+            subjectAttendance = subjectIds.stream().map(subjectId -> {
+                TimetableSlot slot = subjectSlots.get(subjectId);
+                List<AttendanceSession> subjectSessions = bySubject.getOrDefault(subjectId, List.of());
+                long subjectPresent = recordsForStudent(allRecords, student.getId(), subjectSessions).size();
+                Subject subject = slot != null ? slot.getSubject() : subjectSessions.get(0).getSubject();
+                String facultyName = slot != null ? slot.getFaculty().getUser().getName() : subjectSessions.get(0).getFaculty().getUser().getName();
+                return new SubjectAttendance(subjectId, subject.getCode(), subject.getName(), facultyName, subjectPresent, subjectSessions.size(), percentage(subjectPresent, subjectSessions.size()));
+            }).sorted(Comparator.comparing(SubjectAttendance::name)).toList();
+        }
+
         long presentToday = schedule.stream().filter(item -> item.status().equals("present")).count();
         return new StudentDashboardResponse(percentage(present, conducted.size()), subjectAttendance.size(), schedule.size(), presentToday, schedule, subjectAttendance);
     }
