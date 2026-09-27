@@ -1,0 +1,15 @@
+{
+  "properties": [
+    {
+      "name": "app.security.jwt-secret",
+      "type": "java.lang.String",
+      "description": "HMAC signing secret for access tokens."
+    },
+    {
+      "name": "app.security.token-lifetime",
+      "type": "java.time.Duration",
+      "defaultValue": "PT8H",
+      "description": "Access token lifetime."
+    }
+  ]
+}
