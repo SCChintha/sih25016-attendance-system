@@ -9,6 +9,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
+import com.smartattend.repository.AppUserRepository;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -17,10 +18,12 @@ import java.io.IOException;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
+    private final AppUserRepository users;
 
-    public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService, AppUserRepository users) {
         this.jwtService = jwtService;
         this.userDetailsService = userDetailsService;
+        this.users = users;
     }
 
     @Override
@@ -32,7 +35,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String token = header.substring(7);
                 String username = jwtService.extractUsername(token);
                 var user = userDetailsService.loadUserByUsername(username);
-                if (jwtService.isValid(token, user.getUsername()) && user.isEnabled()) {
+                var account = users.findByEmail(username).orElseThrow();
+                if (jwtService.isValid(token, user.getUsername(), account.getTokenVersion()) && user.isEnabled() && !account.isDeleted()) {
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);

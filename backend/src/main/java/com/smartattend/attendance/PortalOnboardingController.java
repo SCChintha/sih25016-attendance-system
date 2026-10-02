@@ -3,7 +3,6 @@ package com.smartattend.attendance;
 import com.smartattend.domain.*;
 import com.smartattend.repository.*;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
@@ -34,6 +33,8 @@ public class PortalOnboardingController {
     private final StudentSubjectFacultyRepository studentSubjectFacultyRepository;
     private final AppUserRepository userRepository;
     private final DepartmentRepository departmentRepository;
+    private final GradeLevelRepository gradeLevels;
+    private final AcademicStreamRepository streams;
 
     public PortalOnboardingController(
             SectionRepository sections,
@@ -43,7 +44,9 @@ public class PortalOnboardingController {
             StudentRepository studentRepository,
             StudentSubjectFacultyRepository studentSubjectFacultyRepository,
             AppUserRepository userRepository,
-            DepartmentRepository departmentRepository) {
+            DepartmentRepository departmentRepository,
+            GradeLevelRepository gradeLevels,
+            AcademicStreamRepository streams) {
         this.sections = sections;
         this.subjects = subjects;
         this.facultyRepository = facultyRepository;
@@ -52,6 +55,8 @@ public class PortalOnboardingController {
         this.studentSubjectFacultyRepository = studentSubjectFacultyRepository;
         this.userRepository = userRepository;
         this.departmentRepository = departmentRepository;
+        this.gradeLevels = gradeLevels;
+        this.streams = streams;
     }
 
     // ==========================================
@@ -73,6 +78,12 @@ public class PortalOnboardingController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only students can perform student profile setup");
         }
 
+        GradeLevel grade = gradeLevels.findById(request.gradeLevelId()).filter(GradeLevel::isActive)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected grade does not exist or is inactive"));
+        AcademicStream stream = streams.findById(request.streamId()).filter(AcademicStream::isActive)
+            .filter(candidate -> candidate.getGradeLevel().getId().equals(grade.getId()))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected stream is not active for this grade"));
+
         Section section = sections.findById(request.sectionId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected section does not exist"));
 
@@ -80,19 +91,32 @@ public class PortalOnboardingController {
             .orElseGet(() -> new Student(user));
 
         student.setSection(section);
-        student.setAcademicGrade(request.academicGrade());
+        student.setGradeLevel(grade);
+        student.setStream(stream);
         student.setOnboardingCompleted(true);
         student = studentRepository.save(student);
 
         // Remove old mappings and save updated Student-Subject-Faculty mappings
         studentSubjectFacultyRepository.deleteByStudentId(student.getId());
 
+        List<SubjectLecturerMapping> requestedMappings = request.mappings() == null ? List.of() : request.mappings();
+        Set<Long> mappedSubjectIds = new HashSet<>();
         List<StudentSubjectFaculty> savedMappings = new ArrayList<>();
-        for (SubjectLecturerMapping mapReq : request.mappings()) {
+        for (SubjectLecturerMapping mapReq : requestedMappings) {
+            if (!mappedSubjectIds.add(mapReq.subjectId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A subject can only be mapped once");
+            }
             Subject subject = subjects.findById(mapReq.subjectId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Subject not found: " + mapReq.subjectId()));
+                .filter(Subject::isActive)
+                .filter(candidate -> candidate.getStream() != null && candidate.getStream().getId().equals(stream.getId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Subject is not active for the selected stream: " + mapReq.subjectId()));
             Faculty faculty = facultyRepository.findById(mapReq.facultyId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Faculty not found: " + mapReq.facultyId()));
+                .filter(candidate -> candidate.getUser().getRole() == Role.FACULTY
+                    && candidate.getUser().isActive() && !candidate.getUser().isDeleted())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected faculty member is unavailable: " + mapReq.facultyId()));
+            if (!facultySubjectRepository.existsByFacultyIdAndSubjectId(faculty.getId(), subject.getId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected faculty member is not assigned to subject " + subject.getCode());
+            }
 
             savedMappings.add(studentSubjectFacultyRepository.save(
                 new StudentSubjectFaculty(student, subject, faculty)
@@ -143,7 +167,7 @@ public class PortalOnboardingController {
             list = subjects.findAll();
         }
 
-        return list.stream()
+        return list.stream().filter(Subject::isActive)
             .map(s -> new SubjectInfo(
                 s.getId(),
                 s.getCode(),
@@ -164,11 +188,8 @@ public class PortalOnboardingController {
         List<FacultySubject> mapped = facultySubjectRepository.findBySubjectId(subjectId);
         Set<Faculty> set = mapped.stream().map(FacultySubject::getFaculty).collect(Collectors.toSet());
 
-        if (set.isEmpty()) {
-            set = new HashSet<>(facultyRepository.findAll());
-        }
-
         return set.stream()
+            .filter(f -> f.getUser().getRole() == Role.FACULTY && f.getUser().isActive() && !f.getUser().isDeleted())
             .map(f -> new FacultyOption(
                 f.getId(),
                 f.getUser().getName(),
@@ -201,24 +222,33 @@ public class PortalOnboardingController {
         Faculty faculty = facultyRepository.findByUserId(user.getId())
             .orElseGet(() -> facultyRepository.save(new Faculty(user)));
 
+        if (faculty.isSubjectsLocked()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Selection is locked. Contact an Administrator to make changes.");
+        }
+
+        List<Subject> selected = subjects.findAllById(request.subjectIds());
+        if (selected.size() != new HashSet<>(request.subjectIds()).size()
+                || selected.stream().anyMatch(subject -> !subject.isActive() || subject.getStream() == null || !subject.getStream().isActive())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose only active subjects configured in the academic catalog");
+        }
+
         // Remove existing faculty-subject associations and re-create
         facultySubjectRepository.deleteByFacultyId(faculty.getId());
 
         List<SubjectInfo> assignedSubjects = new ArrayList<>();
-        for (Long subjectId : request.subjectIds()) {
-            Subject subject = subjects.findById(subjectId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Subject not found: " + subjectId));
-
+        for (Subject subject : selected) {
             facultySubjectRepository.save(new FacultySubject(faculty, subject));
             assignedSubjects.add(new SubjectInfo(subject.getId(), subject.getCode(), subject.getName(), subject.getDepartment().getName()));
         }
+        faculty.setSubjectsLocked(true);
 
         return new FacultyProfileSetupResponse(
             true,
             "Faculty subject catalog configured successfully!",
             faculty.getId(),
             user.getName(),
-            assignedSubjects
+            assignedSubjects,
+            faculty.isSubjectsLocked()
         );
     }
 
@@ -252,7 +282,8 @@ public class PortalOnboardingController {
             "Faculty details retrieved",
             faculty.getId(),
             user.getName(),
-            assignedSubjects
+            assignedSubjects,
+            faculty.isSubjectsLocked()
         );
     }
 
@@ -269,14 +300,19 @@ public class PortalOnboardingController {
     public AdminRecordsResponse getAdminRecords(Authentication authentication) {
         requireAdmin(authentication);
 
-        long totalUsers = userRepository.count();
-        long totalStudents = studentRepository.count();
-        long totalFaculty = facultyRepository.count();
+        List<AppUser> currentUsers = userRepository.findAll().stream().filter(user -> !user.isDeleted()).toList();
+        long totalUsers = currentUsers.size();
+        long totalStudents = currentUsers.stream().filter(user -> user.getRole() == Role.STUDENT).count();
+        long totalFaculty = currentUsers.stream().filter(user -> user.getRole() == Role.FACULTY).count();
         long totalSections = sections.count();
         long totalSubjects = subjects.count();
 
         List<StudentSubjectFaculty> allMappings = studentSubjectFacultyRepository.findAll();
         List<MappingDetail> mappingDetails = allMappings.stream()
+            .filter(mapping -> mapping.getStudent().getUser().getRole() == Role.STUDENT
+                && !mapping.getStudent().getUser().isDeleted()
+                && mapping.getFaculty().getUser().getRole() == Role.FACULTY
+                && !mapping.getFaculty().getUser().isDeleted())
             .map(m -> new MappingDetail(
                 m.getId(),
                 m.getStudent().getId(),
@@ -397,9 +433,10 @@ public class PortalOnboardingController {
     public record SubjectLecturerMapping(@NotNull Long subjectId, @NotNull Long facultyId) { }
 
     public record StudentProfileSetupRequest(
+        @NotNull Long gradeLevelId,
+        @NotNull Long streamId,
         @NotNull Long sectionId,
-        @NotBlank String academicGrade,
-        @NotEmpty List<SubjectLecturerMapping> mappings
+        @Valid List<@NotNull @Valid SubjectLecturerMapping> mappings
     ) {
         // Alias accessor for `selections` if passed by legacy payload
         public List<SubjectLecturerMapping> mappings() {
@@ -431,7 +468,8 @@ public class PortalOnboardingController {
         String message,
         Long facultyId,
         String facultyName,
-        List<SubjectInfo> assignedSubjects
+        List<SubjectInfo> assignedSubjects,
+        boolean locked
     ) { }
 
     public record MappingDetail(

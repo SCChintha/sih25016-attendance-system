@@ -7,6 +7,7 @@ import { Progress } from "./ui/progress";
 import { Users, GraduationCap, TrendingUp, Download, AlertTriangle, BookOpen, ShieldCheck, Edit3, Trash2, Search, RefreshCw, FileText } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from "recharts";
 import { api } from "../api";
+import { AdminManagement } from "./AdminManagement";
 
 const COLORS = ["#18181b", "#52525b", "#a1a1aa", "#d4d4d8"];
 
@@ -27,8 +28,17 @@ export function AdminDashboard() {
       setError("");
       const { data } = await api.get("/dashboard/admin");
       setDashboard(data);
-    } catch {
-      setError("System analytics could not be loaded. Please refresh and try again.");
+    } catch (requestError) {
+      const status = requestError.response?.status;
+      if (status === 403) {
+        setError("This account does not have administrator access. Sign in with an ADMIN account.");
+      } else if (status >= 500) {
+        setError(`The server could not load system analytics (HTTP ${status}). Restart the backend and check its console for the error details.`);
+      } else if (!requestError.response) {
+        setError("Could not reach the backend. Make sure the Spring Boot server is running, then try again.");
+      } else {
+        setError("System analytics could not be loaded. Please try again.");
+      }
     }
   };
 
@@ -42,6 +52,10 @@ export function AdminDashboard() {
     } finally {
       setLoadingRecords(false);
     }
+  };
+
+  const refreshAdminData = async () => {
+    await Promise.all([loadDashboard(), loadAdminRecords()]);
   };
 
   useEffect(() => {
@@ -113,7 +127,24 @@ export function AdminDashboard() {
   };
 
   if (!dashboard && !error) return <div className="py-12 text-center text-muted-foreground">Loading system analytics...</div>;
-  if (!dashboard) return <div className="py-12 text-center text-destructive">{error}</div>;
+  if (!dashboard) return (
+    <div className="space-y-5">
+      <div className="rounded-md border border-destructive/20 bg-destructive/5 py-5 text-center">
+        <p className="text-destructive">{error}</p>
+        <Button variant="outline" className="mt-4" onClick={loadDashboard}>Retry analytics</Button>
+      </div>
+      <Tabs defaultValue="users" className="space-y-4">
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-1">
+          <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="catalog">Academic Setup</TabsTrigger>
+          <TabsTrigger value="faculty">Faculty Subjects</TabsTrigger>
+        </TabsList>
+        <TabsContent value="users"><AdminManagement mode="users" onChanged={refreshAdminData} /></TabsContent>
+        <TabsContent value="catalog"><AdminManagement mode="catalog" /></TabsContent>
+        <TabsContent value="faculty"><AdminManagement mode="faculty" /></TabsContent>
+      </Tabs>
+    </div>
+  );
 
   const filteredMappings = (adminRecords?.mappings || []).filter((m) => {
     const q = mappingSearch.toLowerCase();
@@ -169,13 +200,20 @@ export function AdminDashboard() {
       </div>
 
       <Tabs defaultValue="mappings" className="space-y-4">
-        <TabsList>
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-1">
           <TabsTrigger value="mappings">Academic Mappings ({adminRecords?.totalMappings || 0})</TabsTrigger>
           <TabsTrigger value="logs">Structural Audit Logs</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="departments">Departments & Streams</TabsTrigger>
-          <TabsTrigger value="alerts">Alerts & Reports</TabsTrigger>
-        </TabsList>
+        <TabsTrigger value="alerts">Alerts & Reports</TabsTrigger>
+        <TabsTrigger value="users">Users</TabsTrigger>
+        <TabsTrigger value="catalog">Academic Setup</TabsTrigger>
+        <TabsTrigger value="faculty-subjects">Faculty Subjects</TabsTrigger>
+      </TabsList>
+
+        <TabsContent value="users"><AdminManagement mode="users" onChanged={refreshAdminData} /></TabsContent>
+        <TabsContent value="catalog"><AdminManagement mode="catalog" /></TabsContent>
+        <TabsContent value="faculty-subjects"><AdminManagement mode="faculty" /></TabsContent>
 
         {/* TAB 1: ACADEMIC MAPPINGS MANAGEMENT */}
         <TabsContent value="mappings" className="space-y-4">

@@ -9,7 +9,9 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
-@Profile("default")
+// Sample data is opt-in only. Normal local runs leave the database empty so
+// administrators can enter and verify their own records.
+@Profile("seed-local-data")
 public class LocalDataInitializer {
 
     @Bean

@@ -8,11 +8,16 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ResponseEntity<ErrorResponse> validation(MethodArgumentNotValidException exception) {
         List<AuthController.FieldException> errors = exception.getBindingResult().getFieldErrors().stream()
@@ -40,8 +45,16 @@ public class GlobalExceptionHandler {
             .body(new ErrorResponse(List.of(new AuthController.FieldException(exception.field(), exception.getMessage()))));
     }
 
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ErrorResponse> dataConflict(DataIntegrityViolationException exception) {
+        log.warn("Database uniqueness or referential constraint rejected an API change", exception);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+            .body(new ErrorResponse(List.of(new AuthController.FieldException(null, "The requested change conflicts with existing data"))));
+    }
+
     @ExceptionHandler(Exception.class)
     ResponseEntity<ErrorResponse> unexpected(Exception exception) {
+        log.error("Unhandled API exception", exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
             .body(new ErrorResponse(List.of(new AuthController.FieldException(null, "An unexpected server error occurred"))));
     }

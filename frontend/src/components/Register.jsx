@@ -29,7 +29,6 @@ export function Register({ navigate }) {
     if (form.password.length < 8) nextErrors.password = "Password must be at least 8 characters.";
     if (form.password !== form.confirmPassword) nextErrors.confirmPassword = "Passwords do not match.";
     if (!form.role) nextErrors.role = "Role selection is required.";
-
     if (Object.keys(nextErrors).length > 0) return setErrors(nextErrors);
 
     setSubmitting(true);
@@ -165,7 +164,7 @@ export function Register({ navigate }) {
                 {errors.role && <p className="text-xs text-red-600 font-medium">{errors.role}</p>}
                 <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                  Stream subjects & lecturer mapping will be configured upon your first login.
+                  Students choose their grade and stream after registration during profile setup.
                 </p>
               </div>
 

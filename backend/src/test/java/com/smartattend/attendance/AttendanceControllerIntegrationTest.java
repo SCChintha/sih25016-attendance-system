@@ -3,6 +3,7 @@ package com.smartattend.attendance;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartattend.domain.*;
 import com.smartattend.repository.*;
+import com.smartattend.auth.AuthController;
 import com.smartattend.security.JwtService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -33,6 +36,7 @@ class AttendanceControllerIntegrationTest {
     @Autowired private FacultyRepository faculty;
     @Autowired private StudentRepository students;
     @Autowired private AttendanceSessionRepository sessions;
+    @Autowired private AttendanceRecordRepository attendanceRecords;
     @Autowired private QrTokenService qrTokens;
 
     private AppUser studentUser;
@@ -62,5 +66,42 @@ class AttendanceControllerIntegrationTest {
         mvc.perform(post("/api/attendance/mark").header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON).content(first)).andExpect(status().isOk());
         mvc.perform(post("/api/attendance/mark").header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON).content(duplicate)).andExpect(status().isConflict());
         mvc.perform(post("/api/attendance/mark").header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON).content(invalid)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void adminDashboardIncludesStudentsBeforeOnboardingWithoutFailing() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        AppUser adminUser = users.save(new AppUser("Admin", "admin-dashboard-" + suffix + "@test.edu", "hash", Role.ADMIN));
+        AppUser secondStudentUser = users.save(new AppUser("Second Student", "second-student-" + suffix + "@test.edu", "hash", Role.STUDENT));
+        Student secondStudent = students.save(new Student(secondStudentUser, session.getSection()));
+        AppUser unassignedUser = users.save(new AppUser("New Student", "new-student-" + suffix + "@test.edu", "hash", Role.STUDENT));
+        students.save(new Student(unassignedUser));
+        session.close(Instant.now());
+        sessions.save(session);
+        attendanceRecords.save(new AttendanceRecord(session, students.findByUserId(studentUser.getId()).orElseThrow(), AttendanceMethod.QR, UUID.randomUUID().toString()));
+        AttendanceRecord absent = new AttendanceRecord(session, secondStudent, AttendanceMethod.MANUAL, UUID.randomUUID().toString());
+        absent.setStatus(AttendanceStatus.ABSENT);
+        attendanceRecords.save(absent);
+
+        mvc.perform(get("/api/dashboard/admin")
+                .header("Authorization", "Bearer " + jwtService.createToken(adminUser)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalStudents").value(3))
+            .andExpect(jsonPath("$.overallAttendance").value(50.0))
+            .andExpect(jsonPath("$.departments[0].students").value(2))
+            .andExpect(jsonPath("$.departments[0].attendance").value(50.0))
+            .andExpect(jsonPath("$.atRiskStudents.length()").value(1));
+    }
+
+    @Test
+    void publicRegistrationCannotCreateAdministratorAccounts() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        AuthController.RegisterRequest request = new AuthController.RegisterRequest(
+            "Untrusted Admin", "untrusted-admin-" + suffix + "@test.edu", "valid-password", Role.ADMIN);
+
+        mvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(request)))
+            .andExpect(status().isForbidden());
     }
 }

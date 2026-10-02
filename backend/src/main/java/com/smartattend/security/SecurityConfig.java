@@ -56,7 +56,7 @@ public class SecurityConfig {
         return http.cors(cors -> { }).csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/login", "/api/auth/register", "/api/sections", "/actuator/health").permitAll()
+                .requestMatchers("/api/auth/login", "/api/auth/register", "/api/sections", "/api/public/academic/**", "/actuator/health").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
             .build();
@@ -64,6 +64,6 @@ public class SecurityConfig {
 
     private org.springframework.security.core.userdetails.UserDetails toUserDetails(AppUser user) {
         return User.withUsername(user.getEmail()).password(user.getPasswordHash())
-            .roles(user.getRole().name()).disabled(!user.isActive()).build();
+            .roles(user.getRole().name()).disabled(!user.isActive() || user.isDeleted()).build();
     }
 }

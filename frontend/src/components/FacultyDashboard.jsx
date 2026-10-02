@@ -31,11 +31,11 @@ export function FacultyDashboard({ user }) {
   }, []);
 
   if (!dashboard && !error) {
-    return <div className="py-12 text-center text-muted-foreground">Loading your faculty dashboard...</div>;
+    return <div className="space-y-4"><p className="text-center text-muted-foreground">Loading your faculty dashboard…</p><FacultyProfileSetup user={user} /></div>;
   }
 
   if (!dashboard) {
-    return <div className="py-12 text-center text-destructive">{error}</div>;
+    return <div className="space-y-4"><p role="alert" className="text-center text-destructive">{error}</p><FacultyProfileSetup user={user} /></div>;
   }
 
   const statusBadge = (status) => (status === "closed" ? "default" : status === "open" ? "destructive" : "secondary");
@@ -95,7 +95,7 @@ export function FacultyDashboard({ user }) {
         ))}
       </div>
 
-      <Tabs defaultValue="today" className="space-y-4">
+      <Tabs defaultValue="catalog" className="space-y-4">
         <TabsList>
           <TabsTrigger value="today">Today's Sessions</TabsTrigger>
           <TabsTrigger value="classes">My Classes</TabsTrigger>

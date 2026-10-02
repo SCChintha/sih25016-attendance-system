@@ -32,6 +32,7 @@ public class JwtService {
         return Jwts.builder()
             .subject(user.getEmail())
             .claim("role", user.getRole().name())
+            .claim("ver", user.getTokenVersion())
             .issuedAt(Date.from(issuedAt))
             .expiration(Date.from(issuedAt.plus(tokenLifetime)))
             .signWith(signingKey)
@@ -42,9 +43,17 @@ public class JwtService {
         return parse(token).getSubject();
     }
 
+    public boolean isValid(String token, String username, int currentTokenVersion) {
+        Claims claims = parse(token);
+        Integer tokenVersion = claims.get("ver", Integer.class);
+        return claims.getSubject().equals(username) && claims.getExpiration().after(new Date())
+            && tokenVersion != null && tokenVersion == currentTokenVersion;
+    }
+
+    /** Compatibility helper for token self-validation; request authentication also checks the database token version. */
     public boolean isValid(String token, String username) {
         Claims claims = parse(token);
-        return claims.getSubject().equals(username) && claims.getExpiration().after(new Date());
+        return claims.getSubject().equals(username) && claims.getExpiration().after(new Date()) && claims.get("ver") != null;
     }
 
     private Claims parse(String token) {

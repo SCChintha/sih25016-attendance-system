@@ -1,0 +1,16 @@
+.form-input {
+  display: block;
+  width: 100%;
+  min-height: 2.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--input-background);
+  padding: 0.5rem 0.75rem;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.form-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

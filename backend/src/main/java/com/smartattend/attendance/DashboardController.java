@@ -56,7 +56,7 @@ public class DashboardController {
                 Optional<AttendanceSession> todaySession = sessions.findBySection_Id(student.getSection().getId()).stream()
                     .filter(session -> session.getTimetableSlot() != null && session.getTimetableSlot().getId().equals(slot.getId()))
                     .filter(session -> localDate(session.getStartTime()).equals(today)).findFirst();
-                boolean marked = todaySession.isPresent() && allRecords.stream().anyMatch(record -> record.getStudent().getId().equals(student.getId()) && record.getSession().getId().equals(todaySession.get().getId()));
+                boolean marked = todaySession.isPresent() && allRecords.stream().anyMatch(record -> isPresent(record) && record.getStudent().getId().equals(student.getId()) && record.getSession().getId().equals(todaySession.get().getId()));
                 return new ScheduleItem(slot.getId(), slot.getSubject().getName(), slot.getSubject().getCode(), CLOCK.format(slot.getStartTime()), slot.getRoom(), marked ? "present" : "upcoming");
             }).toList();
 
@@ -105,13 +105,13 @@ public class DashboardController {
         List<AttendanceSession> conducted = ownSessions.stream().filter(session -> session.getStatus() == SessionStatus.CLOSED).toList();
         List<AttendanceRecord> allRecords = records.findAll();
         long possible = conducted.stream().mapToLong(session -> students.countBySection_Id(session.getSection().getId())).sum();
-        long present = allRecords.stream().filter(record -> conducted.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
+        long present = allRecords.stream().filter(DashboardController::isPresent).filter(record -> conducted.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
         Map<Long, AttendanceSession> openBySlot = ownSessions.stream().filter(session -> session.getStatus() == SessionStatus.OPEN && session.getTimetableSlot() != null)
             .collect(Collectors.toMap(session -> session.getTimetableSlot().getId(), Function.identity(), (first, ignored) -> first));
         List<ClassSummary> classes = ownSlots.stream().map(slot -> {
             List<AttendanceSession> classSessions = conducted.stream().filter(session -> session.getTimetableSlot() != null && session.getTimetableSlot().getId().equals(slot.getId())).toList();
             long classPossible = classSessions.stream().mapToLong(session -> students.countBySection_Id(session.getSection().getId())).sum();
-            long classPresent = allRecords.stream().filter(record -> classSessions.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
+            long classPresent = allRecords.stream().filter(DashboardController::isPresent).filter(record -> classSessions.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
             return new ClassSummary(slot.getId(), slot.getSubject().getId(), slot.getSection().getId(), slot.getSubject().getCode(), slot.getSubject().getName(), slot.getSection().getName(),
                 students.countBySection_Id(slot.getSection().getId()), dayLabel(slot.getDayOfWeek()) + " " + CLOCK.format(slot.getStartTime()) + "–" + CLOCK.format(slot.getEndTime()), slot.getRoom(), percentage(classPresent, classPossible), openBySlot.containsKey(slot.getId()) ? openBySlot.get(slot.getId()).getId() : null);
         }).toList();
@@ -120,7 +120,7 @@ public class DashboardController {
             AttendanceSession matched = ownSessions.stream().filter(session -> session.getTimetableSlot() != null && session.getTimetableSlot().getId().equals(slot.getId()))
                 .filter(session -> localDate(session.getStartTime()).equals(today)).findFirst().orElse(null);
             long total = students.countBySection_Id(slot.getSection().getId());
-            long sessionPresent = matched == null ? 0 : allRecords.stream().filter(record -> record.getSession().getId().equals(matched.getId())).count();
+            long sessionPresent = matched == null ? 0 : allRecords.stream().filter(DashboardController::isPresent).filter(record -> record.getSession().getId().equals(matched.getId())).count();
             String status = matched == null ? "upcoming" : matched.getStatus().name().toLowerCase();
             return new FacultySession(slot.getId(), matched == null ? null : matched.getId(), slot.getSubject().getName(), CLOCK.format(slot.getStartTime()), slot.getRoom(), status, sessionPresent, total, percentage(sessionPresent, total));
         }).toList();
@@ -138,7 +138,7 @@ public class DashboardController {
         List<AttendanceRecord> allRecords = records.findAll();
         long enrolled = students.countBySection_Id(slot.getSection().getId());
         List<SessionAttendance> sessionRows = classSessions.stream().map(session -> {
-            long count = allRecords.stream().filter(record -> record.getSession().getId().equals(session.getId())).count();
+            long count = allRecords.stream().filter(DashboardController::isPresent).filter(record -> record.getSession().getId().equals(session.getId())).count();
             return new SessionAttendance(session.getId(), session.getStartTime(), count, enrolled, percentage(count, enrolled));
         }).toList();
         List<StudentAttendanceRow> studentRows = students.findBySection_Id(slot.getSection().getId()).stream().map(student -> {
@@ -152,42 +152,58 @@ public class DashboardController {
     @GetMapping("/admin")
     public AdminDashboardResponse admin(Authentication authentication) {
         requireAdmin(authentication);
-        List<Student> allStudents = students.findAll();
-        List<Faculty> allFaculty = faculty.findAll();
+        List<Student> allStudents = students.findAll().stream()
+            .filter(student -> student.getUser().getRole() == Role.STUDENT && !student.getUser().isDeleted())
+            .toList();
+        // Students can exist before completing onboarding, so their section is optional.
+        // Keep them in the institution-wide student count, but only include assigned
+        // students in section/department attendance analytics.
+        List<Student> assignedStudents = allStudents.stream()
+            .filter(student -> student.getSection() != null)
+            .toList();
         List<AttendanceSession> allSessions = sessions.findAll();
         List<AttendanceSession> conducted = allSessions.stream().filter(session -> session.getStatus() == SessionStatus.CLOSED).toList();
         List<AttendanceRecord> allRecords = records.findAll();
-        long possible = conducted.stream().mapToLong(session -> students.countBySection_Id(session.getSection().getId())).sum();
-        List<DepartmentStats> departments = allStudents.stream().collect(Collectors.groupingBy(student -> student.getSection().getDepartment())).entrySet().stream().map(entry -> {
+        Set<Long> currentStudentIds = allStudents.stream().map(Student::getId).collect(Collectors.toSet());
+        List<AttendanceRecord> currentStudentRecords = allRecords.stream()
+            .filter(record -> currentStudentIds.contains(record.getStudent().getId()))
+            .toList();
+        long possible = conducted.stream().mapToLong(session -> activeStudentsInSection(allStudents, session.getSection().getId())).sum();
+        List<DepartmentStats> departments = assignedStudents.stream().collect(Collectors.groupingBy(student -> student.getSection().getDepartment())).entrySet().stream().map(entry -> {
             Department department = entry.getKey();
             List<AttendanceSession> departmentSessions = conducted.stream().filter(session -> session.getSubject().getDepartment().getId().equals(department.getId())).toList();
-            long departmentPossible = departmentSessions.stream().mapToLong(session -> students.countBySection_Id(session.getSection().getId())).sum();
-            long departmentPresent = allRecords.stream().filter(record -> departmentSessions.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
-            long departmentFaculty = slots.findAll().stream().filter(slot -> slot.getSubject().getDepartment().getId().equals(department.getId())).map(slot -> slot.getFaculty().getId()).distinct().count();
+            long departmentPossible = departmentSessions.stream().mapToLong(session -> activeStudentsInSection(allStudents, session.getSection().getId())).sum();
+            long departmentPresent = currentStudentRecords.stream().filter(DashboardController::isPresent).filter(record -> departmentSessions.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
+            long departmentFaculty = slots.findAll().stream().filter(slot -> slot.getSubject().getDepartment().getId().equals(department.getId()))
+                .filter(slot -> slot.getFaculty().getUser().getRole() == Role.FACULTY && !slot.getFaculty().getUser().isDeleted())
+                .map(slot -> slot.getFaculty().getId()).distinct().count();
             return new DepartmentStats(department.getName(), entry.getValue().size(), departmentFaculty, percentage(departmentPresent, departmentPossible));
         }).sorted(Comparator.comparing(DepartmentStats::name)).toList();
-        List<TrendPoint> trend = monthlyTrend(conducted, allRecords);
-        List<DistributionPoint> distribution = distribution(allStudents, conducted, allRecords);
-        List<AtRiskStudent> atRisk = allStudents.stream().map(student -> {
+        List<TrendPoint> trend = monthlyTrend(conducted, currentStudentRecords, allStudents);
+        List<DistributionPoint> distribution = distribution(assignedStudents, conducted, currentStudentRecords);
+        List<AtRiskStudent> atRisk = assignedStudents.stream().map(student -> {
             List<AttendanceSession> studentSessions = conductedForSection(student.getSection().getId());
-            long studentPresent = recordsForStudent(allRecords, student.getId(), studentSessions).size();
+            long studentPresent = recordsForStudent(currentStudentRecords, student.getId(), studentSessions).size();
             return new AtRiskStudent(student.getId(), student.getUser().getName(), student.getSection().getDepartment().getName(), studentPresent, studentSessions.size(), percentage(studentPresent, studentSessions.size()));
         }).filter(student -> student.totalClasses() > 0 && student.attendance() < AT_RISK_THRESHOLD).sorted(Comparator.comparing(AtRiskStudent::attendance)).limit(20).toList();
         List<TopClass> topClasses = conducted.stream().collect(Collectors.groupingBy(session -> session.getSubject().getCode() + "|" + session.getSection().getName())).entrySet().stream().map(entry -> {
             List<AttendanceSession> group = entry.getValue(); AttendanceSession first = group.get(0);
-            long groupPossible = group.stream().mapToLong(session -> students.countBySection_Id(session.getSection().getId())).sum();
-            long groupPresent = allRecords.stream().filter(record -> group.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
+            long groupPossible = group.stream().mapToLong(session -> activeStudentsInSection(allStudents, session.getSection().getId())).sum();
+            long groupPresent = currentStudentRecords.stream().filter(DashboardController::isPresent).filter(record -> group.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count();
             return new TopClass(first.getSubject().getCode() + " - " + first.getSubject().getName(), first.getFaculty().getUser().getName(), percentage(groupPresent, groupPossible));
         }).sorted(Comparator.comparing(TopClass::attendance).reversed()).limit(10).toList();
         Set<Long> conductedIds = conducted.stream().map(AttendanceSession::getId).collect(Collectors.toSet());
-        long conductedPresent = allRecords.stream().filter(record -> conductedIds.contains(record.getSession().getId())).count();
-        long todayScans = allRecords.stream().filter(record -> localDate(record.getRecordedAt()).equals(LocalDate.now())).count();
-        return new AdminDashboardResponse(allStudents.size(), allFaculty.size(), allSessions.stream().filter(session -> session.getStatus() == SessionStatus.OPEN).count(), percentage(conductedPresent, possible), departments, trend, distribution, atRisk, topClasses, allSessions.stream().filter(session -> session.getStatus() == SessionStatus.OPEN).count(), todayScans);
+        long conductedPresent = currentStudentRecords.stream().filter(DashboardController::isPresent).filter(record -> conductedIds.contains(record.getSession().getId())).count();
+        long todayScans = currentStudentRecords.stream().filter(record -> record.getMethod() == AttendanceMethod.QR).filter(record -> localDate(record.getRecordedAt()).equals(LocalDate.now())).count();
+        List<AppUser> currentUsers = users.findAll().stream().filter(user -> !user.isDeleted()).toList();
+        long totalStudents = currentUsers.stream().filter(user -> user.getRole() == Role.STUDENT).count();
+        long totalFaculty = currentUsers.stream().filter(user -> user.getRole() == Role.FACULTY).count();
+        return new AdminDashboardResponse((int) totalStudents, (int) totalFaculty, allSessions.stream().filter(session -> session.getStatus() == SessionStatus.OPEN).count(), percentage(conductedPresent, possible), departments, trend, distribution, atRisk, topClasses, allSessions.stream().filter(session -> session.getStatus() == SessionStatus.OPEN).count(), todayScans);
     }
 
-    private List<TrendPoint> monthlyTrend(List<AttendanceSession> conducted, List<AttendanceRecord> allRecords) {
+    private List<TrendPoint> monthlyTrend(List<AttendanceSession> conducted, List<AttendanceRecord> allRecords, List<Student> currentStudents) {
         YearMonth current = YearMonth.now(); List<TrendPoint> points = new ArrayList<>();
-        for (int offset = 5; offset >= 0; offset--) { YearMonth month = current.minusMonths(offset); List<AttendanceSession> monthSessions = conducted.stream().filter(session -> YearMonth.from(localDate(session.getStartTime())).equals(month)).toList(); long possible = monthSessions.stream().mapToLong(session -> students.countBySection_Id(session.getSection().getId())).sum(); long present = allRecords.stream().filter(record -> monthSessions.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count(); points.add(new TrendPoint(month.getMonth().toString().substring(0, 3), percentage(present, possible))); }
+        for (int offset = 5; offset >= 0; offset--) { YearMonth month = current.minusMonths(offset); List<AttendanceSession> monthSessions = conducted.stream().filter(session -> YearMonth.from(localDate(session.getStartTime())).equals(month)).toList(); long possible = monthSessions.stream().mapToLong(session -> activeStudentsInSection(currentStudents, session.getSection().getId())).sum(); long present = allRecords.stream().filter(DashboardController::isPresent).filter(record -> monthSessions.stream().anyMatch(session -> session.getId().equals(record.getSession().getId()))).count(); points.add(new TrendPoint(month.getMonth().toString().substring(0, 3), percentage(present, possible))); }
         return points;
     }
     private List<DistributionPoint> distribution(List<Student> allStudents, List<AttendanceSession> conducted, List<AttendanceRecord> allRecords) {
@@ -195,8 +211,12 @@ public class DashboardController {
         for (Student student : allStudents) { List<AttendanceSession> studentSessions = conductedForSection(student.getSection().getId()); if (studentSessions.isEmpty()) continue; measured++; double rate = percentage(recordsForStudent(allRecords, student.getId(), studentSessions).size(), studentSessions.size()); if (rate >= 90) bins[0]++; else if (rate >= 75) bins[1]++; else if (rate >= 60) bins[2]++; else bins[3]++; }
         return List.of(new DistributionPoint("Excellent (90-100%)", percentage(bins[0], measured)), new DistributionPoint("Good (75-89%)", percentage(bins[1], measured)), new DistributionPoint("Average (60-74%)", percentage(bins[2], measured)), new DistributionPoint("Poor (<60%)", percentage(bins[3], measured)));
     }
+    private static long activeStudentsInSection(List<Student> currentStudents, Long sectionId) {
+        return currentStudents.stream().filter(student -> student.getSection() != null && student.getSection().getId().equals(sectionId)).count();
+    }
     private List<AttendanceSession> conductedForSection(Long sectionId) { return sessions.findBySection_Id(sectionId).stream().filter(session -> session.getStatus() == SessionStatus.CLOSED).toList(); }
-    private List<AttendanceRecord> recordsForStudent(List<AttendanceRecord> source, Long studentId, List<AttendanceSession> candidates) { Set<Long> ids = candidates.stream().map(AttendanceSession::getId).collect(Collectors.toSet()); return source.stream().filter(record -> record.getStudent().getId().equals(studentId) && ids.contains(record.getSession().getId())).toList(); }
+    private List<AttendanceRecord> recordsForStudent(List<AttendanceRecord> source, Long studentId, List<AttendanceSession> candidates) { Set<Long> ids = candidates.stream().map(AttendanceSession::getId).collect(Collectors.toSet()); return source.stream().filter(DashboardController::isPresent).filter(record -> record.getStudent().getId().equals(studentId) && ids.contains(record.getSession().getId())).toList(); }
+    private static boolean isPresent(AttendanceRecord record) { return record.getStatus() == AttendanceStatus.PRESENT; }
     private static double percentage(long numerator, long denominator) { return denominator == 0 ? 0d : Math.round((numerator * 10000d) / denominator) / 100d; }
     private static LocalDate localDate(Instant instant) { return instant.atZone(ZoneId.systemDefault()).toLocalDate(); }
     private static String dayLabel(byte day) { return DayOfWeek.of(day).toString().substring(0, 3); }
