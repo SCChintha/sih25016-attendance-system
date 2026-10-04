@@ -29,13 +29,13 @@
 
   Prerequisites: Java 17+ and Maven 3.9+.
 
-  Run the backend from `backend/`:
+  Set `DB_PASSWORD` to your local MySQL password and `JWT_SECRET` to a private random value of at least 32 characters in your shell or IDE run configuration. Do not put either value in this file or commit them. Then run the backend from `backend/`:
 
   ```bash
   mvn spring-boot:run
   ```
 
-  Local development uses MySQL at `localhost:3306/smartattend`. On first startup, the JDBC connection creates the database and Flyway applies the versioned migrations to create its tables. Set `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` if your local MySQL server uses a different host, port, or credentials. The default connection uses the `root` account.
+  Local development uses MySQL at `localhost:3306/smartattend`. On first startup, the JDBC connection creates the database and Flyway applies the versioned migrations to create its tables. Set `DB_URL` and `DB_USERNAME` if your local MySQL server uses a different host, port, or username. The default username is `root`; no password or JWT secret is stored in the project.
 
   For a deployed MySQL environment, provide `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and `JWT_SECRET`. Flyway applies migrations from `backend/src/main/resources/db/migration` and validates the resulting schema. New databases receive all migrations. For a database already created from the old V1/V2 schema while Flyway was disabled, baseline it at version 2 once before starting the profile so Flyway applies V3 and V4 without recreating existing tables. Migrations are forward-only so attendance and account history remain intact.
 
