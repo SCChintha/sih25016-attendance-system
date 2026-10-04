@@ -12,9 +12,9 @@ CREATE TABLE section_subject_faculty (
     faculty_id BIGINT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    CONSTRAINT fk_ssf_section FOREIGN KEY (section_id) REFERENCES sections(id),
-    CONSTRAINT fk_ssf_subject FOREIGN KEY (subject_id) REFERENCES subjects(id),
-    CONSTRAINT fk_ssf_faculty FOREIGN KEY (faculty_id) REFERENCES faculty(id),
+    CONSTRAINT fk_section_subject_faculty_section FOREIGN KEY (section_id) REFERENCES sections(id),
+    CONSTRAINT fk_section_subject_faculty_subject FOREIGN KEY (subject_id) REFERENCES subjects(id),
+    CONSTRAINT fk_section_subject_faculty_faculty FOREIGN KEY (faculty_id) REFERENCES faculty(id),
     CONSTRAINT uk_ssf_section_subject UNIQUE (section_id, subject_id)
 );
 

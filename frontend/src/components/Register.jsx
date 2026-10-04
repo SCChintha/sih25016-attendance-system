@@ -191,6 +191,22 @@ export function Register({ navigate }) {
                   Sign in to your Portal
                 </button>
               </p>
+
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 p-3 text-sm">
+                <p className="font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-primary" /> Administrator account?
+                </p>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                  Admin accounts are created by the person who runs the backend using secure setup; they cannot be self-registered here. If you do not manage the backend, ask your system owner to provision your account. If it is ready, sign in below.
+                </p>
+                <button
+                  type="button"
+                  className="mt-2 text-sm font-semibold text-primary hover:underline"
+                  onClick={() => navigate("/login")}
+                >
+                  Sign in as administrator
+                </button>
+              </div>
             </form>
           </CardContent>
         </Card>

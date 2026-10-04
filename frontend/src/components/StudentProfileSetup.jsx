@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, LoaderCircle, Lock, UserCheck } from "lucide-react";
+import { AlertCircle, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, LoaderCircle, Lock, LogOut, UserCheck } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api";
 import { Button } from "./ui/button";
@@ -8,7 +8,7 @@ import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
 
 export function StudentProfileSetup({ user, onComplete }) {
-  const { getSections, updateUser } = useAuth();
+  const { getSections, updateUser, logout } = useAuth();
   const [step, setStep] = useState(1);
   const [grades, setGrades] = useState([]);
   const [gradeLevelId, setGradeLevelId] = useState("");
@@ -153,6 +153,11 @@ export function StudentProfileSetup({ user, onComplete }) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-8 px-4 flex items-center justify-center">
       <div className="w-full max-w-4xl space-y-6">
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" size="sm" onClick={logout}>
+            <LogOut className="mr-2 h-4 w-4" /> Log out
+          </Button>
+        </div>
         <div className="text-center space-y-2">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold tracking-wide uppercase">
             <GraduationCap className="h-4 w-4" /> Student Profile Setup

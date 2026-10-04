@@ -35,13 +35,13 @@
   mvn spring-boot:run
   ```
 
-  Local development uses an H2 file database in `backend/data/` and creates or updates its schema automatically. The database directory is ignored by Git.
+  Local development uses MySQL at `localhost:3306/smartattend`. On first startup, the JDBC connection creates the database and Flyway applies the versioned migrations to create its tables. Set `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` if your local MySQL server uses a different host, port, or credentials. The default connection uses the `root` account.
 
-  For a deployed MySQL environment, provide `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and `JWT_SECRET`, then run with `--spring.profiles.active=mysql`. That profile applies Flyway migrations from `backend/src/main/resources/db/migration` and validates the resulting schema. New databases receive all migrations. For a database already created from the old V1/V2 schema while Flyway was disabled, baseline it at version 2 once before starting the profile so Flyway applies V3 and V4 without recreating existing tables. Migrations are forward-only so attendance and account history remain intact.
+  For a deployed MySQL environment, provide `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, and `JWT_SECRET`. Flyway applies migrations from `backend/src/main/resources/db/migration` and validates the resulting schema. New databases receive all migrations. For a database already created from the old V1/V2 schema while Flyway was disabled, baseline it at version 2 once before starting the profile so Flyway applies V3 and V4 without recreating existing tables. Migrations are forward-only so attendance and account history remain intact.
 
   ### Secure initial administrator
 
-  Admin accounts cannot be created through public registration. For a fresh installation, start the backend once with these environment variables set; the bootstrap creates the account only if that email does not already exist:
+  Admin accounts cannot be created through public registration. The person who runs the backend must provision an admin account. From the `backend` directory, start the backend with these environment variables set, replacing the example name, email, and password with the account details:
 
   ```powershell
   $env:APP_BOOTSTRAP_ADMIN_ENABLED = "true"
@@ -51,7 +51,16 @@
   mvn spring-boot:run
   ```
 
-  The password is BCrypt-hashed. After first setup, unset the bootstrap variables. Never commit these secrets.
+  On startup, the bootstrap creates the admin account if that email is not already registered. The password is BCrypt-hashed. After startup, stop the backend and remove the variables from that PowerShell session:
+
+  ```powershell
+  Remove-Item Env:APP_BOOTSTRAP_ADMIN_ENABLED
+  Remove-Item Env:SUPER_ADMIN_NAME
+  Remove-Item Env:SUPER_ADMIN_EMAIL
+  Remove-Item Env:SUPER_ADMIN_PASSWORD
+  ```
+
+  Never commit these secrets. The new admin can then sign in from the portal's login page. If you do not run the backend, ask its system owner to provision your admin account.
 
   ### Admin and faculty workflows
 
